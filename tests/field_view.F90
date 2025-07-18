@@ -21,7 +21,7 @@ PROGRAM FIELD_VIEW
 
         REAL(KIND=JPRB), POINTER :: ZZ3 (:,:,:)
         REAL(KIND=JPRB), POINTER :: ZZ2 (:,:)
-        TYPE (FIELD_3RB_VIEW),ALLOCATABLE :: VIEWS_A(:)
+        TYPE (FIELD_3RB_VIEW),ALLOCATABLE :: YL3VA(:)
 
         INTEGER :: JLEV,KLEV,JINIT
         LOGICAL :: LDACC, A2B
@@ -29,7 +29,7 @@ PROGRAM FIELD_VIEW
         KLEV = 5
         ALLOCATE(A(10,10,KLEV))
         ALLOCATE(B(10,10,KLEV))
-        ALLOCATE(VIEWS_A(KLEV))
+        ALLOCATE(YL3VA(KLEV))
         !$ACC ENTER DATA CREATE(B)
 
         DO  JINIT = 1, 4
@@ -68,11 +68,11 @@ PROGRAM FIELD_VIEW
             ENDIF
 
           DO JLEV = 1,KLEV
-            VIEWS_A(JLEV)%P => ZZ3 (:, :, JLEV)
+            YL3VA(JLEV)%P => ZZ3 (:, :, JLEV)
           ENDDO
 
           DO JLEV = 1,KLEV
-            ZZ2=>VIEWS_A(JLEV)%P
+            ZZ2=>YL3VA(JLEV)%P
             IF (LDACC) THEN
               !$acc kernels present (B, ZZ2)
               IF (A2B) THEN
@@ -81,7 +81,7 @@ PROGRAM FIELD_VIEW
                 ZZ2(:,:) = B(:,:,JLEV)
               ENDIF
               !$acc end kernels
-              
+
             ELSE
               IF (A2B) THEN
                 B(:,:,JLEV) = ZZ2(:,:)
@@ -91,22 +91,16 @@ PROGRAM FIELD_VIEW
             ENDIF
           ENDDO
 
-          WRITE(*,*) "JINIT", JINIT
-          WRITE(*,*) "LDACC", LDACC
-          WRITE(*,*) "A2B",A2B
-
           IF (LDACC) THEN
             ! Synchronize on host before testing values
             ZZ3 => GET_HOST_DATA_RDONLY (FIELD_A)
             !$acc update host (B)
           ENDIF
-      
+
           IF ( .NOT. ALL(A == JINIT))THEN
-            WRITE(*,*) "A Not correct", JINIT
             CALL FIELD_ABORT ("ERROR")
           END IF
           IF ( .NOT. ALL(B == JINIT))THEN
-            WRITE(*,*) "B Not correct", JINIT
             CALL FIELD_ABORT ("ERROR")
           END IF
 
@@ -116,7 +110,7 @@ PROGRAM FIELD_VIEW
 
       DEALLOCATE(A)
       DEALLOCATE(B)
-      DEALLOCATE(VIEWS_A)
+      DEALLOCATE(YL3VA)
 
       CALL FIELD_DELETE(FIELD_A)
 
