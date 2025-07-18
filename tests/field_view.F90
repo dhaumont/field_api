@@ -30,7 +30,7 @@ PROGRAM FIELD_VIEW
         ALLOCATE(A(10,10,KLEV))
         ALLOCATE(B(10,10,KLEV))
         ALLOCATE(VIEWS_A(KLEV))
-        !$ACC ENTER DATA CREATE(A,B)
+        !$ACC ENTER DATA CREATE(B)
 
         DO  JINIT = 1, 4
 
@@ -41,8 +41,6 @@ PROGRAM FIELD_VIEW
             IF (JINIT > 2) LDACC = .TRUE.
             IF (MOD(JINIT,2) == 0) A2B = .TRUE.
 
-            IF (LDACC) THEN
-              !$acc kernels present (A,B)
               IF (A2B) THEN
                 A(:,:,:) = JINIT
                 B(:,:,:) = -1
@@ -50,17 +48,11 @@ PROGRAM FIELD_VIEW
                 A(:,:,:) = -1
                 B(:,:,:) = JINIT
               ENDIF
-              !$acc end kernels
-            ELSE
-              IF (A2B) THEN
-                A(:,:,:) = JINIT
-                B(:,:,:) = -1
-              ELSE
-                A(:,:,:) = -1
-                B(:,:,:) = JINIT
-              ENDIF
-            ENDIF
-
+            if (LDACC) THEN
+              ! Synchronize on host before testing values
+               ZZ3 => GET_DEVICE_DATA_RDONLY (FIELD_A)
+               !$acc update device (B)
+            endif
             IF (A2B) THEN
               IF (LDACC) THEN
                   ZZ3 => GET_DEVICE_DATA_RDONLY(FIELD_A)
@@ -76,24 +68,20 @@ PROGRAM FIELD_VIEW
             ENDIF
 
           DO JLEV = 1,KLEV
-            !$acc data present(zz3(:,jlev,:)) if(LDACC)
-            !$ACC HOST_DATA USE_DEVICE (ZZ3 (:, JLEV, :)) IF (LDACC)
             VIEWS_A(JLEV)%P => ZZ3 (:, :, JLEV)
-            !$ACC END HOST_DATA
-            !$acc end data
           ENDDO
 
           DO JLEV = 1,KLEV
             ZZ2=>VIEWS_A(JLEV)%P
             IF (LDACC) THEN
               !$acc kernels present (B, ZZ2)
-
               IF (A2B) THEN
                 B(:,:,JLEV) = ZZ2(:,:)
               ELSE
                 ZZ2(:,:) = B(:,:,JLEV)
               ENDIF
               !$acc end kernels
+              
             ELSE
               IF (A2B) THEN
                 B(:,:,JLEV) = ZZ2(:,:)
@@ -106,6 +94,13 @@ PROGRAM FIELD_VIEW
           WRITE(*,*) "JINIT", JINIT
           WRITE(*,*) "LDACC", LDACC
           WRITE(*,*) "A2B",A2B
+
+          IF (LDACC) THEN
+            ! Synchronize on host before testing values
+            ZZ3 => GET_HOST_DATA_RDONLY (FIELD_A)
+            !$acc update host (B)
+          ENDIF
+      
           IF ( .NOT. ALL(A == JINIT))THEN
             WRITE(*,*) "A Not correct", JINIT
             CALL FIELD_ABORT ("ERROR")
@@ -117,7 +112,7 @@ PROGRAM FIELD_VIEW
 
         ENDDO
 
-      !$ACC EXIT DATA DELETE(A,B)
+      !$ACC EXIT DATA DELETE(B)
 
       DEALLOCATE(A)
       DEALLOCATE(B)
