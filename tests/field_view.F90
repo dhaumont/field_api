@@ -8,110 +8,209 @@
 ! nor does it submit to any jurisdiction.
 
 PROGRAM FIELD_VIEW
+    USE FIELD_MODULE
+    USE FIELD_FACTORY_MODULE
+    USE PARKIND1
+    USE FIELD_ABORT_MODULE
+    USE FIELD_ACCESS_MODULE, ONLY: GET_HOST_DATA_RDWR, GET_DEVICE_DATA_RDWR, GET_HOST_DATA_RDONLY,GET_DEVICE_DATA_RDONLY
 
-        USE FIELD_MODULE
-        USE FIELD_FACTORY_MODULE
-        USE PARKIND1
-        USE FIELD_ABORT_MODULE
-        USE FIELD_ACCESS_MODULE, ONLY: GET_HOST_DATA_RDWR, GET_DEVICE_DATA_RDWR, GET_HOST_DATA_RDONLY,GET_DEVICE_DATA_RDONLY
-        IMPLICIT NONE
-        CLASS(FIELD_3RB), POINTER :: FIELD_A => NULL()
-        REAL(KIND=JPRB), ALLOCATABLE :: A(:,:,:)
-        REAL(KIND=JPRB), ALLOCATABLE :: B(:,:,:)
+    IMPLICIT NONE
 
-        REAL(KIND=JPRB), POINTER :: ZZ3 (:,:,:)
-        REAL(KIND=JPRB), POINTER :: ZZ2 (:,:)
-        TYPE (FIELD_3RB_VIEW),ALLOCATABLE :: YL3VA(:)
+    CLASS(FIELD_3RB), POINTER :: FIELD_A => NULL()
+    REAL(KIND=JPRB), ALLOCATABLE :: A(:,:,:)
+    REAL(KIND=JPRB), ALLOCATABLE :: B(:,:,:)
 
-        INTEGER :: JLEV,KLEV,JINIT
-        LOGICAL :: LDACC, A2B
+    REAL(KIND=JPRB), POINTER :: ZZ3 (:,:,:)
+    REAL(KIND=JPRB), POINTER :: ZZ1 (:)
+    TYPE (FIELD_2RB_VIEW),ALLOCATABLE :: YL2VA(:)
 
-        KLEV = 5
-        ALLOCATE(A(10,10,KLEV))
-        ALLOCATE(B(10,10,KLEV))
-        ALLOCATE(YL3VA(KLEV))
-        !$ACC ENTER DATA CREATE(B)
+    INTEGER :: JLEV,KLEV,JFLD,KSPEC,KFLDS,JINIT,ID
+    LOGICAL :: LDACC, LA2B, LSUCCESS
 
-        DO  JINIT = 1, 4
+    LSUCCESS = .TRUE.
+    KLEV = 3
+    KSPEC = 10
+    KFLDS = 2
+    ALLOCATE(A(KLEV,KSPEC,KFLDS))
+    ALLOCATE(B(KLEV,KSPEC,KFLDS))
+    !$ACC ENTER DATA CREATE(B)
+    CALL FIELD_NEW(FIELD_A, DATA=A)
+    WRITE(*,*) "A", SHAPE(A)
+    DO  JINIT = 1, 4
 
-            CALL FIELD_NEW(FIELD_A, DATA=A)
+        LDACC = .FALSE.
+        LA2B = .FALSE.
+        IF (JINIT > 2) LDACC = .TRUE.
+        IF (MOD(JINIT,2) == 0) LA2B = .TRUE.
 
-            LDACC = .FALSE.
-            A2B = .FALSE.
-            IF (JINIT > 2) LDACC = .TRUE.
-            IF (MOD(JINIT,2) == 0) A2B = .TRUE.
+        WRITE(*,"(A,I1,A,L1, A,L1,A)") "CONFIG: ", JINIT, " [LDACC=", LDACC, ", LA2B=", LA2B,"]"
 
-              IF (A2B) THEN
-                A(:,:,:) = JINIT
-                B(:,:,:) = -1
-              ELSE
-                A(:,:,:) = -1
-                B(:,:,:) = JINIT
-              ENDIF
-            if (LDACC) THEN
-              ! Synchronize on host before testing values
-               ZZ3 => GET_DEVICE_DATA_RDONLY (FIELD_A)
-               !$acc update device (B)
-            endif
-            IF (A2B) THEN
-              IF (LDACC) THEN
-                  ZZ3 => GET_DEVICE_DATA_RDONLY(FIELD_A)
-                ELSE
-                  ZZ3 => GET_HOST_DATA_RDONLY(FIELD_A)
-              ENDIF
-            ELSE
-              IF (LDACC) THEN
-                ZZ3 => GET_DEVICE_DATA_RDWR(FIELD_A)
-              ELSE
-                ZZ3 => GET_HOST_DATA_RDWR(FIELD_A)
-              ENDIF
-            ENDIF
+        ZZ3 => GET_HOST_DATA_RDWR(FIELD_A)
+ 
+        IF (LA2B) THEN
+          ZZ3(:,:,:) = JINIT
+          B(:,:,:) = -1
+        ELSE
+          ZZ3(:,:,:) = -1
+          B(:,:,:) = JINIT
+        ENDIF
+        if (LDACC) THEN
+            !ZZ3 => GET_DEVICE_DATA_RDONLY(FIELD_A)
+           !$acc update device (B)
+        endif
 
-          DO JLEV = 1,KLEV
-            YL3VA(JLEV)%P => ZZ3 (:, :, JLEV)
-          ENDDO
+!     ----------------------------
+!     Version 1 - allocating Y2LVA inside LS will generate a
+!                 'partially present' error OpenAcc runtime error
+      YL2VA = LS(FIELD_A,LA2B,LDACC, KLEV, KFLDS)
 
-          DO JLEV = 1,KLEV
-            ZZ2=>YL3VA(JLEV)%P
+!     ----------------------------
+!     Version 2 - pre-allocating Y2LVA will solve the issue 
+!      ALLOCATE(YL2VA(KLEV*KFLDS))
+!      CALL LS_ROUTINE(YL2VA, FIELD_A,LA2B,LDACC, KLEV, KFLDS)
+
+      WRITE(*,*) "RETRIEVE:"
+      ID = 1
+      DO JLEV = 1,KLEV
+         DO JFLD = 1,KFLDS
+            ZZ1=>YL2VA(ID)%P
+            WRITE(*,"(I3,A,z16.16)") ID, ": 0x", LOC(ZZ1)
             IF (LDACC) THEN
-              !$acc kernels present (B, ZZ2)
-              IF (A2B) THEN
-                B(:,:,JLEV) = ZZ2(:,:)
+              !$acc kernels present (B, ZZ1)
+              IF (LA2B) THEN
+                B(JLEV,:,JFLD) = ZZ1(:)
               ELSE
-                ZZ2(:,:) = B(:,:,JLEV)
+                ZZ1(:) = B(JLEV,:,JFLD)
               ENDIF
-              !$acc end kernels
-
+             !$acc end kernels
             ELSE
-              IF (A2B) THEN
-                B(:,:,JLEV) = ZZ2(:,:)
+              IF (LA2B) THEN
+                B(JLEV,:,JFLD) = ZZ1(:)
               ELSE
-                ZZ2(:,:) = B(:,:,JLEV)
+                ZZ1(:) = B(JLEV,:,JFLD)
               ENDIF
             ENDIF
+            ID = ID + 1
           ENDDO
+      ENDDO
+      IF (LDACC) THEN
+        ! Synchronize on host before testing values
+        ZZ3 => GET_HOST_DATA_RDONLY (FIELD_A)
+        !$acc update host (B)
+      ENDIF
 
-          IF (LDACC) THEN
-            ! Synchronize on host before testing values
-            ZZ3 => GET_HOST_DATA_RDONLY (FIELD_A)
-            !$acc update host (B)
-          ENDIF
+      IF ( .NOT. ALL(A == JINIT))THEN
+        WRITE(*,*) "ERROR: A IS NOT ALWAY EQUAL TO ", JINIT 
+        WRITE(*,*) A
+        LSUCCESS = .FALSE.
+      END IF
+      IF ( .NOT. ALL(B == JINIT))THEN
+        WRITE(*,*) "ERROR: B IS NOT ALWAYS EQUAL TO ", JINIT
+        WRITE(*,*) B 
+        LSUCCESS = .FALSE.
+      END IF
 
-          IF ( .NOT. ALL(A == JINIT))THEN
-            CALL FIELD_ABORT ("ERROR")
-          END IF
-          IF ( .NOT. ALL(B == JINIT))THEN
-            CALL FIELD_ABORT ("ERROR")
-          END IF
+      DEALLOCATE(YL2VA)
+    ENDDO
 
-        ENDDO
+  !$ACC EXIT DATA DELETE(B)
 
-      !$ACC EXIT DATA DELETE(B)
+  CALL FIELD_DELETE(FIELD_A)
+  DEALLOCATE(A)
+  DEALLOCATE(B)
 
-      DEALLOCATE(A)
-      DEALLOCATE(B)
-      DEALLOCATE(YL3VA)
+  IF (.NOT. LSUCCESS) THEN
+     CALL FIELD_ABORT ("Error occured")
+  ENDIF
+contains
 
-      CALL FIELD_DELETE(FIELD_A)
+! In LS_ROUTINE, LS array is pre-allocated and passed as argument.
+! This version is supported by nvhpc 22.11
 
-    END PROGRAM FIELD_VIEW
+subroutine LS_ROUTINE(LS,FIELD_A,LA2B,LDACC, KLEV, KFLDS)
+    TYPE (FIELD_2RB_VIEW),ALLOCATABLE, INTENT(INOUT) :: LS(:)
+    INTEGER :: KLEV,KFLDS
+    LOGICAL LA2B, LDACC
+    CLASS(FIELD_3RB), POINTER :: FIELD_A
+
+    REAL(KIND=JPRB), POINTER :: ZZ1 (:)
+    REAL(KIND=JPRB), POINTER :: ZZ3 (:,:,:)
+    INTEGER :: ID, JLEV, JFLD
+
+    IF (LA2B) THEN
+      IF (LDACC) THEN
+          ZZ3 => GET_DEVICE_DATA_RDONLY(FIELD_A)
+        ELSE
+          ZZ3 => GET_HOST_DATA_RDONLY(FIELD_A)
+      ENDIF
+    ELSE
+      IF (LDACC) THEN
+        ZZ3 => GET_DEVICE_DATA_RDWR(FIELD_A)
+      ELSE
+        ZZ3 => GET_HOST_DATA_RDWR(FIELD_A)
+      ENDIF
+    ENDIF
+
+  WRITE(*,*) "ASSIGN (pre-allocated):"
+  ID = 1
+  DO JLEV = 1,KLEV
+     DO JFLD = 1,KFLDS
+        LS(ID)%P => ZZ3 (JLEV, :, JFLD)
+        WRITE(*,"(I3,A,z16.16)") ID, ": 0x", LOC(LS(ID)%P)
+        ID = ID + 1
+      ENDDO
+  ENDDO
+
+  end subroutine
+
+! In LS, LS array is allocated inside the function.
+! This is not supported by nvhpc 22.11
+
+function LS(FIELD_A,LA2B,LDACC, KLEV, KFLDS)
+    TYPE (FIELD_2RB_VIEW),ALLOCATABLE :: LS(:)
+    INTEGER :: KLEV,KFLDS
+    LOGICAL LA2B, LDACC
+    CLASS(FIELD_3RB), POINTER :: FIELD_A
+ 
+    ALLOCATE(LS(KLEV*KFLDS))
+    CALL LS_SUBROUTINE(LS, FIELD_A, LA2B, LDACC, KLEV, KFLDS)
+  end function
+
+  subroutine LS_SUBROUTINE(LS,FIELD_A,LA2B,LDACC, KLEV, KFLDS)
+    TYPE (FIELD_2RB_VIEW),ALLOCATABLE, INTENT(INOUT) :: LS(:)
+    INTEGER :: KLEV,KFLDS
+    LOGICAL LA2B, LDACC
+    CLASS(FIELD_3RB), POINTER :: FIELD_A
+
+    REAL(KIND=JPRB), POINTER :: ZZ1 (:)
+    REAL(KIND=JPRB), POINTER :: ZZ3 (:,:,:)
+    INTEGER :: ID, JLEV, JFLD
+
+    IF (LA2B) THEN
+      IF (LDACC) THEN
+          ZZ3 => GET_DEVICE_DATA_RDONLY(FIELD_A)
+        ELSE
+          ZZ3 => GET_HOST_DATA_RDONLY(FIELD_A)
+      ENDIF
+    ELSE
+      IF (LDACC) THEN
+        ZZ3 => GET_DEVICE_DATA_RDWR(FIELD_A)
+      ELSE
+        ZZ3 => GET_HOST_DATA_RDWR(FIELD_A)
+      ENDIF
+    ENDIF
+
+  WRITE(*,*) "ASSIGN:"
+  ID = 1
+  DO JLEV = 1,KLEV
+     DO JFLD = 1,KFLDS
+        LS(ID)%P => ZZ3 (JLEV, :, JFLD)
+        WRITE(*,"(I3,A,z16.16)") ID, ": 0x", LOC(LS(ID)%P)
+        ID = ID + 1
+      ENDDO
+  ENDDO
+
+  end subroutine
+
+
+END PROGRAM FIELD_VIEW
