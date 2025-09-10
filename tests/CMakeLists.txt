@@ -171,6 +171,21 @@ if( HAVE_SINGLE_PRECISION )
     target_link_options( init_wrapper_mixed_precision.x PRIVATE $<${HAVE_CUDA}:-cuda> )
 endif()
 
+## GNU Fortran sp unit-test
+ecbuild_add_test(
+    TARGET  test_gnu_sp.x
+    SOURCES test_gnu_sp.F90
+    LIBS
+      ${LIBNAME}_sp
+      fiat
+      parkind_sp
+      OpenMP::OpenMP_Fortran
+      $<${HAVE_ACC}:OpenACC::OpenACC_Fortran>
+    LINKER_LANGUAGE Fortran
+    CONDITION ${HAVE_SINGLE_PRECISION}
+)
+
+target_compile_definitions( test_gnu_sp.x PRIVATE PARKIND1_SINGLE )
 ## Test presence of GPUs
 add_executable(check_gpu_num.x check_gpu_num.F90)
 target_link_libraries(check_gpu_num.x PRIVATE $<${HAVE_ACC}:OpenACC::OpenACC_Fortran>)
